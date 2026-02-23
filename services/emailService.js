@@ -1,24 +1,122 @@
-const nodemailer = require('nodemailer');
+const Brevo = require('@getbrevo/brevo');
 const AdminConfig = require('../models/AdminConfig');
 
-const transporter = nodemailer.createTransport({
-  service: 'gmail',
-  auth: {
-    user: process.env.GMAIL_USER,
-    pass: process.env.GMAIL_APP_PASSWORD
-  }
-});
+// Configure Brevo API
+const emailAPI = new Brevo.TransactionalEmailsApi();
+emailAPI.authentications['apiKey'].apiKey = process.env.BREVO_API_KEY;
 
-// Verify transporter on startup
-transporter.verify().then(() => {
-  console.log('Email service ready');
-}).catch((err) => {
-  console.error('Email service error:', err.message);
-});
+const SENDER_EMAIL = process.env.BREVO_SENDER_EMAIL || 'noreply@dogh-appointments.com';
+const SENDER_NAME = 'DOGH Room Appointment';
+
+// Verify Brevo API on startup
+(async () => {
+  try {
+    const accountApi = new Brevo.AccountApi();
+    accountApi.authentications['apiKey'].apiKey = process.env.BREVO_API_KEY;
+    const account = await accountApi.getAccount();
+    console.log(`Brevo email service ready (${account.email})`);
+  } catch (err) {
+    console.error('Brevo email service error:', err.message || err);
+  }
+})();
 
 const formatDate = (dateStr) => {
   const d = new Date(dateStr + 'T00:00:00');
   return d.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+};
+
+// Improved email template builder
+const buildEmailHtml = ({ headerSubtitle, badgeBg, badgeColor, badgeBorder, badgeText, bodyContent, footerText }) => {
+  return `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>DOGH Room Appointment</title>
+</head>
+<body style="margin: 0; padding: 0; background-color: #f1f5f9; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; -webkit-font-smoothing: antialiased;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color: #f1f5f9; padding: 32px 16px;">
+    <tr>
+      <td align="center">
+        <table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width: 600px; width: 100%;">
+          <!-- Header -->
+          <tr>
+            <td style="background: linear-gradient(135deg, #0f172a 0%, #1e3a5f 50%, #2563eb 100%); padding: 40px 32px; border-radius: 16px 16px 0 0; text-align: center;">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+                <tr>
+                  <td align="center" style="padding-bottom: 8px;">
+                    <div style="width: 56px; height: 56px; background: rgba(255,255,255,0.15); border-radius: 14px; display: inline-block; line-height: 56px; font-size: 28px;">&#127975;</div>
+                  </td>
+                </tr>
+                <tr>
+                  <td align="center">
+                    <h1 style="color: #ffffff; margin: 0; font-size: 24px; font-weight: 700; letter-spacing: -0.5px;">DOGH Room Appointment</h1>
+                  </td>
+                </tr>
+                <tr>
+                  <td align="center" style="padding-top: 6px;">
+                    <p style="color: #93c5fd; margin: 0; font-size: 14px; font-weight: 400;">${headerSubtitle}</p>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+          <!-- Body -->
+          <tr>
+            <td style="background: #ffffff; padding: 36px 32px 32px; border-left: 1px solid #e2e8f0; border-right: 1px solid #e2e8f0;">
+              <!-- Status Badge -->
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+                <tr>
+                  <td align="center" style="padding-bottom: 28px;">
+                    <span style="display: inline-block; background: ${badgeBg}; color: ${badgeColor}; padding: 10px 24px; border-radius: 24px; font-weight: 600; font-size: 15px; border: 1px solid ${badgeBorder}; letter-spacing: 0.2px;">
+                      ${badgeText}
+                    </span>
+                  </td>
+                </tr>
+              </table>
+              ${bodyContent}
+            </td>
+          </tr>
+          <!-- Footer -->
+          <tr>
+            <td style="background: #f8fafc; padding: 24px 32px; border-radius: 0 0 16px 16px; border: 1px solid #e2e8f0; border-top: none;">
+              <p style="color: #94a3b8; font-size: 12px; text-align: center; margin: 0; line-height: 1.6;">
+                ${footerText}<br>
+                Davao Occidental General Hospital &bull; Room Appointment System
+              </p>
+            </td>
+          </tr>
+          <!-- Branding -->
+          <tr>
+            <td align="center" style="padding-top: 20px;">
+              <p style="color: #cbd5e1; font-size: 11px; margin: 0;">Powered by DOGH Appointment System</p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`;
+};
+
+const buildDetailsTable = (rows) => {
+  const rowsHtml = rows.map(({ label, value }) => `
+    <tr>
+      <td style="padding: 10px 12px; color: #64748b; font-size: 13px; font-weight: 500; text-transform: uppercase; letter-spacing: 0.5px; width: 110px; vertical-align: top; border-bottom: 1px solid #f1f5f9;">${label}</td>
+      <td style="padding: 10px 12px; color: #1e293b; font-size: 14px; font-weight: 500; border-bottom: 1px solid #f1f5f9;">${value}</td>
+    </tr>`).join('');
+
+  return `
+    <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; overflow: hidden; margin-bottom: 24px;">
+      <div style="background: #1e3a5f; padding: 12px 16px;">
+        <h3 style="color: #ffffff; margin: 0; font-size: 12px; text-transform: uppercase; letter-spacing: 1px; font-weight: 600;">Appointment Details</h3>
+      </div>
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+        ${rowsHtml}
+      </table>
+    </div>`;
 };
 
 // Send email to booker when appointment is approved/declined
@@ -27,74 +125,68 @@ const sendStatusEmail = async (appointment, status) => {
 
   const isApproved = status === 'approved';
   const statusText = isApproved ? 'Approved' : 'Declined';
-  const statusColor = isApproved ? '#16a34a' : '#dc2626';
-  const statusEmoji = isApproved ? '✅' : '❌';
+  const statusColor = isApproved ? '#15803d' : '#dc2626';
+  const badgeBg = isApproved ? '#f0fdf4' : '#fef2f2';
+  const badgeBorder = isApproved ? '#86efac' : '#fca5a5';
+  const statusIcon = isApproved ? '&#10003;' : '&#10007;';
 
-  const subject = `${statusEmoji} Appointment ${statusText} - DOGH Room Appointment System`;
+  const subject = `Appointment ${statusText} - DOGH Room Appointment System`;
 
-  const html = `
-    <div style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; max-width: 600px; margin: 0 auto; background: #f8fafc; padding: 20px;">
-      <div style="background: linear-gradient(135deg, #1e40af, #2563eb); padding: 30px; border-radius: 12px 12px 0 0; text-align: center;">
-        <h1 style="color: white; margin: 0; font-size: 22px;">DOGH Room Appointment System</h1>
-        <p style="color: #bfdbfe; margin: 5px 0 0 0; font-size: 14px;">Davao Occidental General Hospital</p>
-      </div>
-      <div style="background: white; padding: 30px; border-radius: 0 0 12px 12px; border: 1px solid #e2e8f0; border-top: none;">
-        <div style="text-align: center; margin-bottom: 24px;">
-          <span style="display: inline-block; background: ${isApproved ? '#f0fdf4' : '#fef2f2'}; color: ${statusColor}; padding: 8px 20px; border-radius: 20px; font-weight: 600; font-size: 16px; border: 1px solid ${isApproved ? '#bbf7d0' : '#fecaca'};">
-            ${statusEmoji} Appointment ${statusText}
-          </span>
-        </div>
-        <p style="color: #374151; font-size: 15px; margin-bottom: 20px;">
-          Dear <strong>${appointment.bookerName}</strong>,
-        </p>
-        <p style="color: #374151; font-size: 15px; margin-bottom: 20px;">
-          Your appointment request has been <strong style="color: ${statusColor};">${statusText.toLowerCase()}</strong> by the administrator.
-        </p>
-        <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 20px; margin-bottom: 20px;">
-          <h3 style="color: #1e40af; margin: 0 0 12px 0; font-size: 14px; text-transform: uppercase; letter-spacing: 0.5px;">Appointment Details</h3>
-          <table style="width: 100%; border-collapse: collapse;">
-            <tr>
-              <td style="padding: 6px 0; color: #6b7280; font-size: 14px; width: 100px;">Room:</td>
-              <td style="padding: 6px 0; color: #111827; font-size: 14px; font-weight: 500;">${appointment.room}</td>
-            </tr>
-            <tr>
-              <td style="padding: 6px 0; color: #6b7280; font-size: 14px;">Date:</td>
-              <td style="padding: 6px 0; color: #111827; font-size: 14px; font-weight: 500;">${formatDate(appointment.date)}</td>
-            </tr>
-            <tr>
-              <td style="padding: 6px 0; color: #6b7280; font-size: 14px;">Time:</td>
-              <td style="padding: 6px 0; color: #111827; font-size: 14px; font-weight: 500;">${appointment.timeStart} - ${appointment.timeEnd}</td>
-            </tr>
-            <tr>
-              <td style="padding: 6px 0; color: #6b7280; font-size: 14px;">Reason:</td>
-              <td style="padding: 6px 0; color: #111827; font-size: 14px; font-weight: 500;">${appointment.reason}</td>
-            </tr>
-          </table>
-        </div>
-        ${appointment.adminNotes ? `
-        <div style="background: #fffbeb; border: 1px solid #fde68a; border-radius: 8px; padding: 16px; margin-bottom: 20px;">
-          <p style="color: #92400e; font-size: 13px; font-weight: 600; margin: 0 0 4px 0;">Admin Notes:</p>
-          <p style="color: #78350f; font-size: 14px; margin: 0;">${appointment.adminNotes}</p>
-        </div>
-        ` : ''}
-        <p style="color: #6b7280; font-size: 13px; text-align: center; margin-top: 24px; border-top: 1px solid #e2e8f0; padding-top: 16px;">
-          This is an automated message from the DOGH Room Appointment System.<br>
-          Please do not reply to this email.
-        </p>
-      </div>
-    </div>
-  `;
+  const detailsTable = buildDetailsTable([
+    { label: 'Room', value: appointment.room },
+    { label: 'Date', value: formatDate(appointment.date) },
+    { label: 'Time', value: `${appointment.timeStart} &ndash; ${appointment.timeEnd}` },
+    { label: 'Reason', value: appointment.reason }
+  ]);
+
+  const adminNotesHtml = appointment.adminNotes ? `
+    <div style="background: #fffbeb; border: 1px solid #fde68a; border-radius: 10px; padding: 16px 20px; margin-bottom: 24px;">
+      <p style="color: #92400e; font-size: 12px; font-weight: 600; margin: 0 0 6px 0; text-transform: uppercase; letter-spacing: 0.5px;">Admin Notes</p>
+      <p style="color: #78350f; font-size: 14px; margin: 0; line-height: 1.5;">${appointment.adminNotes}</p>
+    </div>` : '';
+
+  const bodyContent = `
+    <p style="color: #334155; font-size: 15px; margin: 0 0 8px 0; line-height: 1.6;">
+      Dear <strong style="color: #0f172a;">${appointment.bookerName}</strong>,
+    </p>
+    <p style="color: #334155; font-size: 15px; margin: 0 0 28px 0; line-height: 1.6;">
+      Your appointment request has been <strong style="color: ${statusColor};">${statusText.toLowerCase()}</strong> by the administrator.
+    </p>
+    ${detailsTable}
+    ${adminNotesHtml}
+    ${isApproved ? `
+    <div style="background: #f0fdf4; border: 1px solid #86efac; border-radius: 10px; padding: 16px 20px; margin-bottom: 8px;">
+      <p style="color: #15803d; font-size: 14px; margin: 0; line-height: 1.5;">
+        <strong>Next steps:</strong> Please arrive at least 5 minutes before your scheduled time. If you need to cancel, please contact the administrator.
+      </p>
+    </div>` : `
+    <div style="background: #fef2f2; border: 1px solid #fca5a5; border-radius: 10px; padding: 16px 20px; margin-bottom: 8px;">
+      <p style="color: #dc2626; font-size: 14px; margin: 0; line-height: 1.5;">
+        You may submit a new appointment request with a different date or time.
+      </p>
+    </div>`}`;
+
+  const html = buildEmailHtml({
+    headerSubtitle: 'Davao Occidental General Hospital',
+    badgeBg,
+    badgeColor: statusColor,
+    badgeBorder,
+    badgeText: `${statusIcon} Appointment ${statusText}`,
+    bodyContent,
+    footerText: 'This is an automated message. Please do not reply to this email.'
+  });
 
   try {
-    await transporter.sendMail({
-      from: `"DOGH Room Appointment" <${process.env.GMAIL_USER}>`,
-      to: appointment.bookerEmail,
-      subject,
-      html
-    });
+    const sendSmtpEmail = new Brevo.SendSmtpEmail();
+    sendSmtpEmail.sender = { name: SENDER_NAME, email: SENDER_EMAIL };
+    sendSmtpEmail.to = [{ email: appointment.bookerEmail, name: appointment.bookerName }];
+    sendSmtpEmail.subject = subject;
+    sendSmtpEmail.htmlContent = html;
+
+    await emailAPI.sendTransacEmail(sendSmtpEmail);
     console.log(`Status email sent to ${appointment.bookerEmail} (${status})`);
   } catch (err) {
-    console.error('Failed to send status email:', err.message);
+    console.error('Failed to send status email:', err.message || err);
   }
 };
 
@@ -105,71 +197,48 @@ const sendNewRequestEmailToAdmins = async (appointment) => {
     if (!config || !config.value || config.value.length === 0) return;
 
     const adminEmails = config.value;
-    const subject = `📋 New Appointment Request - ${appointment.room}`;
+    const subject = `New Appointment Request - ${appointment.room}`;
 
-    const html = `
-      <div style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; max-width: 600px; margin: 0 auto; background: #f8fafc; padding: 20px;">
-        <div style="background: linear-gradient(135deg, #1e40af, #2563eb); padding: 30px; border-radius: 12px 12px 0 0; text-align: center;">
-          <h1 style="color: white; margin: 0; font-size: 22px;">DOGH Room Appointment System</h1>
-          <p style="color: #bfdbfe; margin: 5px 0 0 0; font-size: 14px;">New Appointment Request</p>
-        </div>
-        <div style="background: white; padding: 30px; border-radius: 0 0 12px 12px; border: 1px solid #e2e8f0; border-top: none;">
-          <div style="text-align: center; margin-bottom: 24px;">
-            <span style="display: inline-block; background: #fefce8; color: #a16207; padding: 8px 20px; border-radius: 20px; font-weight: 600; font-size: 16px; border: 1px solid #fde68a;">
-              📋 New Request - Pending Review
-            </span>
-          </div>
-          <p style="color: #374151; font-size: 15px; margin-bottom: 20px;">
-            A new appointment request has been submitted and requires your review.
-          </p>
-          <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 20px; margin-bottom: 20px;">
-            <h3 style="color: #1e40af; margin: 0 0 12px 0; font-size: 14px; text-transform: uppercase; letter-spacing: 0.5px;">Request Details</h3>
-            <table style="width: 100%; border-collapse: collapse;">
-              <tr>
-                <td style="padding: 6px 0; color: #6b7280; font-size: 14px; width: 100px;">Booker:</td>
-                <td style="padding: 6px 0; color: #111827; font-size: 14px; font-weight: 500;">${appointment.bookerName}</td>
-              </tr>
-              <tr>
-                <td style="padding: 6px 0; color: #6b7280; font-size: 14px;">Email:</td>
-                <td style="padding: 6px 0; color: #111827; font-size: 14px; font-weight: 500;">${appointment.bookerEmail}</td>
-              </tr>
-              <tr>
-                <td style="padding: 6px 0; color: #6b7280; font-size: 14px;">Room:</td>
-                <td style="padding: 6px 0; color: #111827; font-size: 14px; font-weight: 500;">${appointment.room}</td>
-              </tr>
-              <tr>
-                <td style="padding: 6px 0; color: #6b7280; font-size: 14px;">Date:</td>
-                <td style="padding: 6px 0; color: #111827; font-size: 14px; font-weight: 500;">${formatDate(appointment.date)}</td>
-              </tr>
-              <tr>
-                <td style="padding: 6px 0; color: #6b7280; font-size: 14px;">Time:</td>
-                <td style="padding: 6px 0; color: #111827; font-size: 14px; font-weight: 500;">${appointment.timeStart} - ${appointment.timeEnd}</td>
-              </tr>
-              <tr>
-                <td style="padding: 6px 0; color: #6b7280; font-size: 14px;">Reason:</td>
-                <td style="padding: 6px 0; color: #111827; font-size: 14px; font-weight: 500;">${appointment.reason}</td>
-              </tr>
-            </table>
-          </div>
-          <p style="color: #374151; font-size: 14px; text-align: center;">
-            Please log in to the admin panel to approve or decline this request.
-          </p>
-          <p style="color: #6b7280; font-size: 13px; text-align: center; margin-top: 24px; border-top: 1px solid #e2e8f0; padding-top: 16px;">
-            This is an automated message from the DOGH Room Appointment System.
-          </p>
-        </div>
-      </div>
-    `;
+    const detailsTable = buildDetailsTable([
+      { label: 'Booker', value: appointment.bookerName },
+      { label: 'Email', value: appointment.bookerEmail },
+      { label: 'Room', value: appointment.room },
+      { label: 'Date', value: formatDate(appointment.date) },
+      { label: 'Time', value: `${appointment.timeStart} &ndash; ${appointment.timeEnd}` },
+      { label: 'Reason', value: appointment.reason }
+    ]);
 
-    await transporter.sendMail({
-      from: `"DOGH Room Appointment" <${process.env.GMAIL_USER}>`,
-      to: adminEmails.join(', '),
-      subject,
-      html
+    const bodyContent = `
+      <p style="color: #334155; font-size: 15px; margin: 0 0 28px 0; line-height: 1.6;">
+        A new appointment request has been submitted and requires your review.
+      </p>
+      ${detailsTable}
+      <div style="text-align: center; margin-top: 28px;">
+        <p style="color: #475569; font-size: 14px; margin: 0;">
+          Please log in to the <strong>Admin Panel</strong> to approve or decline this request.
+        </p>
+      </div>`;
+
+    const html = buildEmailHtml({
+      headerSubtitle: 'New Appointment Request',
+      badgeBg: '#fefce8',
+      badgeColor: '#a16207',
+      badgeBorder: '#fde68a',
+      badgeText: '&#128203; New Request &ndash; Pending Review',
+      bodyContent,
+      footerText: 'This is an automated admin notification.'
     });
+
+    const sendSmtpEmail = new Brevo.SendSmtpEmail();
+    sendSmtpEmail.sender = { name: SENDER_NAME, email: SENDER_EMAIL };
+    sendSmtpEmail.to = adminEmails.map(email => ({ email }));
+    sendSmtpEmail.subject = subject;
+    sendSmtpEmail.htmlContent = html;
+
+    await emailAPI.sendTransacEmail(sendSmtpEmail);
     console.log(`New request email sent to admins: ${adminEmails.join(', ')}`);
   } catch (err) {
-    console.error('Failed to send admin notification email:', err.message);
+    console.error('Failed to send admin notification email:', err.message || err);
   }
 };
 
