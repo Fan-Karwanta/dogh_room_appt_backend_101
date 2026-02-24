@@ -1,8 +1,15 @@
 const express = require('express');
 const router = express.Router();
 const Appointment = require('../models/Appointment');
+const AdminConfig = require('../models/AdminConfig');
 const { appointmentLimiter } = require('../middleware/rateLimiter');
 const { sendNewRequestEmailToAdmins } = require('../services/emailService');
+
+// Helper to get request limit settings from DB
+const getRequestLimitConfig = async () => {
+  const config = await AdminConfig.findOne({ key: 'request_limit' });
+  return config ? config.value : { enabled: false, maxRequests: 3 };
+};
 
 // Get all appointments (approved only for public)
 router.get('/', async (req, res) => {
@@ -78,23 +85,26 @@ router.post('/', appointmentLimiter, async (req, res) => {
       return res.status(400).json({ error: 'All fields are required' });
     }
 
-    // Check weekly limit (3 per device per week)
-    const now = new Date();
-    const startOfWeek = new Date(now);
-    startOfWeek.setDate(now.getDate() - now.getDay());
-    startOfWeek.setHours(0, 0, 0, 0);
-    const endOfWeek = new Date(startOfWeek);
-    endOfWeek.setDate(startOfWeek.getDate() + 7);
+    // Check weekly limit (configurable via admin settings)
+    const limitConfig = await getRequestLimitConfig();
+    if (limitConfig.enabled) {
+      const now = new Date();
+      const startOfWeek = new Date(now);
+      startOfWeek.setDate(now.getDate() - now.getDay());
+      startOfWeek.setHours(0, 0, 0, 0);
+      const endOfWeek = new Date(startOfWeek);
+      endOfWeek.setDate(startOfWeek.getDate() + 7);
 
-    const weeklyCount = await Appointment.countDocuments({
-      deviceId,
-      createdAt: { $gte: startOfWeek, $lt: endOfWeek }
-    });
-
-    if (weeklyCount >= 3) {
-      return res.status(429).json({
-        error: 'You have reached the maximum of 3 appointment requests per week. Please try again next week.'
+      const weeklyCount = await Appointment.countDocuments({
+        deviceId,
+        createdAt: { $gte: startOfWeek, $lt: endOfWeek }
       });
+
+      if (weeklyCount >= limitConfig.maxRequests) {
+        return res.status(429).json({
+          error: `You have reached the maximum of ${limitConfig.maxRequests} appointment request(s) per week. Please try again next week.`
+        });
+      }
     }
 
     // Check for overlapping approved appointments
@@ -158,6 +168,12 @@ router.get('/:id', async (req, res) => {
 router.get('/check-limit/:deviceId', async (req, res) => {
   try {
     const { deviceId } = req.params;
+    const limitConfig = await getRequestLimitConfig();
+
+    if (!limitConfig.enabled) {
+      return res.json({ enabled: false, count: 0, remaining: null, maxRequests: null });
+    }
+
     const now = new Date();
     const startOfWeek = new Date(now);
     startOfWeek.setDate(now.getDate() - now.getDay());
@@ -170,7 +186,12 @@ router.get('/check-limit/:deviceId', async (req, res) => {
       createdAt: { $gte: startOfWeek, $lt: endOfWeek }
     });
 
-    res.json({ count: weeklyCount, remaining: Math.max(0, 3 - weeklyCount) });
+    res.json({
+      enabled: true,
+      count: weeklyCount,
+      remaining: Math.max(0, limitConfig.maxRequests - weeklyCount),
+      maxRequests: limitConfig.maxRequests
+    });
   } catch (err) {
     res.status(500).json({ error: 'Server error' });
   }

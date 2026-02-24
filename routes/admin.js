@@ -200,4 +200,38 @@ router.put('/settings/admin-emails', verifyAdmin, async (req, res) => {
   }
 });
 
+// Get request limit settings
+router.get('/settings/request-limit', verifyAdmin, async (req, res) => {
+  try {
+    const config = await AdminConfig.findOne({ key: 'request_limit' });
+    res.json(config ? config.value : { enabled: false, maxRequests: 3 });
+  } catch (err) {
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// Update request limit settings
+router.put('/settings/request-limit', verifyAdmin, async (req, res) => {
+  try {
+    const { enabled, maxRequests } = req.body;
+    if (typeof enabled !== 'boolean') {
+      return res.status(400).json({ error: 'enabled must be a boolean' });
+    }
+    if (enabled && (!Number.isInteger(maxRequests) || maxRequests < 1)) {
+      return res.status(400).json({ error: 'maxRequests must be a positive integer' });
+    }
+
+    const value = { enabled, maxRequests: enabled ? maxRequests : 3 };
+    const config = await AdminConfig.findOneAndUpdate(
+      { key: 'request_limit' },
+      { key: 'request_limit', value },
+      { upsert: true, new: true }
+    );
+
+    res.json(config.value);
+  } catch (err) {
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
 module.exports = router;
