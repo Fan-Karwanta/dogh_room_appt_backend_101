@@ -151,6 +151,42 @@ router.post('/', appointmentLimiter, async (req, res) => {
   }
 });
 
+// Cancel own pending appointment (user action)
+router.patch('/:id/cancel', async (req, res) => {
+  try {
+    const { deviceId } = req.body;
+
+    if (!deviceId) {
+      return res.status(400).json({ error: 'Device ID is required' });
+    }
+
+    const appointment = await Appointment.findById(req.params.id);
+    if (!appointment) {
+      return res.status(404).json({ error: 'Appointment not found' });
+    }
+
+    // Verify ownership
+    if (appointment.deviceId !== deviceId) {
+      return res.status(403).json({ error: 'You can only cancel your own appointments' });
+    }
+
+    // Only allow cancelling pending appointments
+    if (appointment.status !== 'pending') {
+      return res.status(400).json({ error: `Cannot cancel an appointment that is already ${appointment.status}. Please contact the administrator for assistance.` });
+    }
+
+    appointment.previousStatus = appointment.status;
+    appointment.status = 'cancelled';
+    appointment.cancelledAt = new Date();
+    appointment.cancellationReason = 'Cancelled by user';
+    await appointment.save();
+
+    res.json(appointment);
+  } catch (err) {
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
 // Get appointment by ID
 router.get('/:id', async (req, res) => {
   try {
