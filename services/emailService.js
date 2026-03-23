@@ -269,4 +269,69 @@ const sendNewRequestEmailToAdmins = async (appointment) => {
   }
 };
 
-module.exports = { sendStatusEmail, sendNewRequestEmailToAdmins };
+// Send email to booker when appointment is cancelled by admin
+const sendCancellationEmail = async (appointment) => {
+  if (!appointment.bookerEmail) return;
+
+  const subject = `Appointment Cancelled - DOGH Room Appointment System`;
+
+  const detailsTable = buildDetailsTable([
+    { label: 'Room', value: appointment.room },
+    { label: 'Date', value: formatDate(appointment.date) },
+    { label: 'Time', value: `${appointment.timeStart} &ndash; ${appointment.timeEnd}` },
+    { label: 'Reason', value: appointment.reason },
+    { label: 'Previous Status', value: `<span style="text-transform: capitalize;">${appointment.previousStatus}</span>` }
+  ]);
+
+  const cancellationReasonHtml = appointment.cancellationReason ? `
+    <div style="background: #fef2f2; border: 1px solid #fca5a5; border-radius: 10px; padding: 16px 20px; margin-bottom: 24px;">
+      <p style="color: #991b1b; font-size: 12px; font-weight: 600; margin: 0 0 6px 0; text-transform: uppercase; letter-spacing: 0.5px;">Reason for Cancellation</p>
+      <p style="color: #7f1d1d; font-size: 14px; margin: 0; line-height: 1.5;">${appointment.cancellationReason}</p>
+    </div>` : '';
+
+  const adminNotesHtml = appointment.adminNotes ? `
+    <div style="background: #fffbeb; border: 1px solid #fde68a; border-radius: 10px; padding: 16px 20px; margin-bottom: 24px;">
+      <p style="color: #92400e; font-size: 12px; font-weight: 600; margin: 0 0 6px 0; text-transform: uppercase; letter-spacing: 0.5px;">Admin Notes</p>
+      <p style="color: #78350f; font-size: 14px; margin: 0; line-height: 1.5;">${appointment.adminNotes}</p>
+    </div>` : '';
+
+  const bodyContent = `
+    <p style="color: #334155; font-size: 15px; margin: 0 0 8px 0; line-height: 1.6;">
+      Dear <strong style="color: #0f172a;">${appointment.bookerName}</strong>,
+    </p>
+    <p style="color: #334155; font-size: 15px; margin: 0 0 28px 0; line-height: 1.6;">
+      Your appointment has been <strong style="color: #dc2626;">cancelled</strong> by the administrator.
+    </p>
+    ${detailsTable}
+    ${cancellationReasonHtml}
+    ${adminNotesHtml}
+    <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px; padding: 16px 20px; margin-bottom: 8px;">
+      <p style="color: #475569; font-size: 14px; margin: 0; line-height: 1.5;">
+        The time slot is now available again. You may submit a new appointment request if needed.
+      </p>
+    </div>`;
+
+  const html = buildEmailHtml({
+    headerSubtitle: 'Davao Occidental General Hospital',
+    badgeBg: '#fef2f2',
+    badgeColor: '#dc2626',
+    badgeBorder: '#fca5a5',
+    badgeText: '&#10007; Appointment Cancelled',
+    bodyContent,
+    footerText: 'This is an automated message. Please do not reply to this email.'
+  });
+
+  try {
+    await brevoRequest('POST', '/smtp/email', {
+      sender: { name: SENDER_NAME, email: SENDER_EMAIL },
+      to: [{ email: appointment.bookerEmail, name: appointment.bookerName }],
+      subject,
+      htmlContent: html,
+    });
+    console.log(`Cancellation email sent to ${appointment.bookerEmail}`);
+  } catch (err) {
+    console.error('Failed to send cancellation email:', err.message || err);
+  }
+};
+
+module.exports = { sendStatusEmail, sendNewRequestEmailToAdmins, sendCancellationEmail };

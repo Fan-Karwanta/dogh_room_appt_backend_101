@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const Appointment = require('../models/Appointment');
 const AdminConfig = require('../models/AdminConfig');
-const { sendStatusEmail } = require('../services/emailService');
+const { sendStatusEmail, sendCancellationEmail } = require('../services/emailService');
 
 // Admin login (password check)
 router.post('/login', (req, res) => {
@@ -48,6 +48,7 @@ router.get('/dashboard', verifyAdmin, async (req, res) => {
     const pending = await Appointment.countDocuments({ status: 'pending' });
     const approved = await Appointment.countDocuments({ status: 'approved' });
     const declined = await Appointment.countDocuments({ status: 'declined' });
+    const cancelled = await Appointment.countDocuments({ status: 'cancelled' });
 
     const todayStr = new Date().toISOString().split('T')[0];
     const todayAppointments = await Appointment.countDocuments({
@@ -69,6 +70,7 @@ router.get('/dashboard', verifyAdmin, async (req, res) => {
       pending,
       approved,
       declined,
+      cancelled,
       todayAppointments,
       roomStats: {
         'AB Conference Room': abConference,
@@ -148,6 +150,37 @@ router.patch('/appointments/:id', verifyAdmin, async (req, res) => {
     if (status === 'approved' || status === 'declined') {
       sendStatusEmail(appointment, status);
     }
+
+    res.json(appointment);
+  } catch (err) {
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// Cancel appointment (admin)
+router.patch('/appointments/:id/cancel', verifyAdmin, async (req, res) => {
+  try {
+    const { cancellationReason } = req.body;
+
+    const appointment = await Appointment.findById(req.params.id);
+    if (!appointment) {
+      return res.status(404).json({ error: 'Appointment not found' });
+    }
+
+    if (appointment.status === 'cancelled') {
+      return res.status(400).json({ error: 'Appointment is already cancelled' });
+    }
+
+    const previousStatus = appointment.status;
+
+    appointment.previousStatus = previousStatus;
+    appointment.status = 'cancelled';
+    appointment.cancelledAt = new Date();
+    appointment.cancellationReason = cancellationReason || '';
+    await appointment.save();
+
+    // Send cancellation email to booker
+    sendCancellationEmail(appointment);
 
     res.json(appointment);
   } catch (err) {
