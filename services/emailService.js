@@ -1,17 +1,52 @@
+const https = require('https');
 const nodemailer = require('nodemailer');
 const AdminConfig = require('../models/AdminConfig');
 
-// Generic SMTP transport — works with any provider via env vars.
-// Brevo: SMTP_HOST=smtp-relay.brevo.com, SMTP_PORT=587, SMTP_USER=<brevo login email>, SMTP_PASS=<smtp key from Brevo dashboard>
-// Gmail: SMTP_HOST=smtp.gmail.com, SMTP_PORT=465, SMTP_USER=<gmail address>, SMTP_PASS=<app password>
+const BREVO_API_KEY = process.env.BREVO_API_KEY;
+const SENDER_EMAIL = process.env.SENDER_EMAIL || process.env.SMTP_SENDER || process.env.BREVO_SENDER_EMAIL || process.env.SMTP_USER || 'noreply@dogh-appointments.com';
+const SENDER_NAME = 'DOGH Room Appointment';
+
+// --- Brevo HTTP API transport (port 443 — works on hosts that block SMTP ports) ---
+const brevoRequest = (method, path, body) => {
+  return new Promise((resolve, reject) => {
+    const data = body ? JSON.stringify(body) : null;
+    const options = {
+      hostname: 'api.brevo.com',
+      port: 443,
+      path: `/v3${path}`,
+      method,
+      headers: {
+        'accept': 'application/json',
+        'api-key': BREVO_API_KEY,
+        'content-type': 'application/json',
+      },
+    };
+    if (data) options.headers['content-length'] = Buffer.byteLength(data);
+
+    const req = https.request(options, (res) => {
+      let responseBody = '';
+      res.on('data', (chunk) => { responseBody += chunk; });
+      res.on('end', () => {
+        if (res.statusCode >= 200 && res.statusCode < 300) {
+          try { resolve(JSON.parse(responseBody)); } catch { resolve(responseBody); }
+        } else {
+          reject(new Error(`Brevo API ${res.statusCode}: ${responseBody}`));
+        }
+      });
+    });
+    req.on('error', reject);
+    if (data) req.write(data);
+    req.end();
+  });
+};
+
+// --- Generic SMTP transport (fallback; works where SMTP ports are open) ---
 const SMTP_HOST = process.env.SMTP_HOST;
 const SMTP_PORT = parseInt(process.env.SMTP_PORT || '587', 10);
 const SMTP_USER = process.env.SMTP_USER;
 const SMTP_PASS = process.env.SMTP_PASS;
-const SENDER_EMAIL = process.env.SENDER_EMAIL || process.env.SMTP_SENDER || SMTP_USER || 'noreply@dogh-appointments.com';
-const SENDER_NAME = 'DOGH Room Appointment';
 
-const transporter = (SMTP_HOST && SMTP_USER && SMTP_PASS)
+const smtpTransporter = (SMTP_HOST && SMTP_USER && SMTP_PASS)
   ? nodemailer.createTransport({
       host: SMTP_HOST,
       port: SMTP_PORT,
@@ -20,33 +55,55 @@ const transporter = (SMTP_HOST && SMTP_USER && SMTP_PASS)
     })
   : null;
 
+// Prefer the HTTP API transport — free-tier hosts commonly block SMTP ports
+const TRANSPORT = BREVO_API_KEY ? 'brevo' : (smtpTransporter ? 'smtp' : null);
+
 const sendMail = async (to, subject, html) => {
-  if (!transporter) {
-    console.warn('Email not configured (SMTP_* env vars missing) — skipping send.');
-    return;
-  }
   const recipients = (Array.isArray(to) ? to : [to])
     .map(t => (typeof t === 'string' ? t : t.email));
-  await transporter.sendMail({
-    from: `"${SENDER_NAME}" <${SENDER_EMAIL}>`,
-    to: recipients.join(', '),
-    subject,
-    html,
-  });
-};
 
-// Verify SMTP connection on startup
-(async () => {
-  if (!transporter) {
-    console.warn('Email service disabled: SMTP_HOST, SMTP_USER or SMTP_PASS not set');
+  if (TRANSPORT === 'brevo') {
+    await brevoRequest('POST', '/smtp/email', {
+      sender: { name: SENDER_NAME, email: SENDER_EMAIL },
+      to: recipients.map(email => ({ email })),
+      subject,
+      htmlContent: html,
+    });
     return;
   }
-  try {
-    await transporter.verify();
-    console.log(`Email service ready (SMTP ${SMTP_HOST})`);
-  } catch (err) {
-    console.error('Email service error:', err.message || err);
+  if (TRANSPORT === 'smtp') {
+    await smtpTransporter.sendMail({
+      from: `"${SENDER_NAME}" <${SENDER_EMAIL}>`,
+      to: recipients.join(', '),
+      subject,
+      html,
+    });
+    return;
   }
+  console.warn('Email not configured (no BREVO_API_KEY or SMTP_* set) — skipping send.');
+};
+
+// Verify the active transport on startup
+(async () => {
+  if (TRANSPORT === 'brevo') {
+    try {
+      const account = await brevoRequest('GET', '/account');
+      console.log(`Email service ready (Brevo API — ${account.email})`);
+    } catch (err) {
+      console.error('Email service error:', err.message || err);
+    }
+    return;
+  }
+  if (TRANSPORT === 'smtp') {
+    try {
+      await smtpTransporter.verify();
+      console.log(`Email service ready (SMTP ${SMTP_HOST})`);
+    } catch (err) {
+      console.error('Email service error:', err.message || err);
+    }
+    return;
+  }
+  console.warn('Email service disabled: no BREVO_API_KEY or SMTP_* env vars set');
 })();
 
 const formatDate = (dateStr) => {

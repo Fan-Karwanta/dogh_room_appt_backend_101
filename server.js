@@ -13,6 +13,9 @@ dotenv.config();
 
 const app = express();
 
+// Trust Render's reverse proxy so rate limiting sees real client IPs
+app.set('trust proxy', 1);
+
 // Middleware
 app.use(cors());
 app.use(express.json());
