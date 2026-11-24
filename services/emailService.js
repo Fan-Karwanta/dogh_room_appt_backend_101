@@ -1,51 +1,51 @@
-const https = require('https');
+const nodemailer = require('nodemailer');
 const AdminConfig = require('../models/AdminConfig');
 
-const BREVO_API_KEY = process.env.BREVO_API_KEY;
-const SENDER_EMAIL = process.env.BREVO_SENDER_EMAIL || 'noreply@dogh-appointments.com';
+// Generic SMTP transport — works with any provider via env vars.
+// Brevo: SMTP_HOST=smtp-relay.brevo.com, SMTP_PORT=587, SMTP_USER=<brevo login email>, SMTP_PASS=<smtp key from Brevo dashboard>
+// Gmail: SMTP_HOST=smtp.gmail.com, SMTP_PORT=465, SMTP_USER=<gmail address>, SMTP_PASS=<app password>
+const SMTP_HOST = process.env.SMTP_HOST;
+const SMTP_PORT = parseInt(process.env.SMTP_PORT || '587', 10);
+const SMTP_USER = process.env.SMTP_USER;
+const SMTP_PASS = process.env.SMTP_PASS;
+const SENDER_EMAIL = process.env.SENDER_EMAIL || SMTP_USER || 'noreply@dogh-appointments.com';
 const SENDER_NAME = 'DOGH Room Appointment';
 
-// Direct HTTPS helper for Brevo API (no SDK, works on all Node.js versions)
-const brevoRequest = (method, path, body) => {
-  return new Promise((resolve, reject) => {
-    const data = body ? JSON.stringify(body) : null;
-    const options = {
-      hostname: 'api.brevo.com',
-      port: 443,
-      path: `/v3${path}`,
-      method,
-      headers: {
-        'accept': 'application/json',
-        'api-key': BREVO_API_KEY,
-        'content-type': 'application/json',
-      },
-    };
-    if (data) options.headers['content-length'] = Buffer.byteLength(data);
+const transporter = (SMTP_HOST && SMTP_USER && SMTP_PASS)
+  ? nodemailer.createTransport({
+      host: SMTP_HOST,
+      port: SMTP_PORT,
+      secure: SMTP_PORT === 465,
+      auth: { user: SMTP_USER, pass: SMTP_PASS },
+    })
+  : null;
 
-    const req = https.request(options, (res) => {
-      let responseBody = '';
-      res.on('data', (chunk) => { responseBody += chunk; });
-      res.on('end', () => {
-        if (res.statusCode >= 200 && res.statusCode < 300) {
-          try { resolve(JSON.parse(responseBody)); } catch { resolve(responseBody); }
-        } else {
-          reject(new Error(`Brevo API ${res.statusCode}: ${responseBody}`));
-        }
-      });
-    });
-    req.on('error', reject);
-    if (data) req.write(data);
-    req.end();
+const sendMail = async (to, subject, html) => {
+  if (!transporter) {
+    console.warn('Email not configured (SMTP_* env vars missing) — skipping send.');
+    return;
+  }
+  const recipients = (Array.isArray(to) ? to : [to])
+    .map(t => (typeof t === 'string' ? t : t.email));
+  await transporter.sendMail({
+    from: `"${SENDER_NAME}" <${SENDER_EMAIL}>`,
+    to: recipients.join(', '),
+    subject,
+    html,
   });
 };
 
-// Verify Brevo API on startup
+// Verify SMTP connection on startup
 (async () => {
+  if (!transporter) {
+    console.warn('Email service disabled: SMTP_HOST, SMTP_USER or SMTP_PASS not set');
+    return;
+  }
   try {
-    const account = await brevoRequest('GET', '/account');
-    console.log(`Brevo email service ready (${account.email})`);
+    await transporter.verify();
+    console.log(`Email service ready (SMTP ${SMTP_HOST})`);
   } catch (err) {
-    console.error('Brevo email service error:', err.message || err);
+    console.error('Email service error:', err.message || err);
   }
 })();
 
@@ -206,12 +206,7 @@ const sendStatusEmail = async (appointment, status) => {
   });
 
   try {
-    await brevoRequest('POST', '/smtp/email', {
-      sender: { name: SENDER_NAME, email: SENDER_EMAIL },
-      to: [{ email: appointment.bookerEmail, name: appointment.bookerName }],
-      subject,
-      htmlContent: html,
-    });
+    await sendMail(appointment.bookerEmail, subject, html);
     console.log(`Status email sent to ${appointment.bookerEmail} (${status})`);
   } catch (err) {
     console.error('Failed to send status email:', err.message || err);
@@ -257,12 +252,7 @@ const sendNewRequestEmailToAdmins = async (appointment) => {
       footerText: 'This is an automated admin notification.'
     });
 
-    await brevoRequest('POST', '/smtp/email', {
-      sender: { name: SENDER_NAME, email: SENDER_EMAIL },
-      to: adminEmails.map(email => ({ email })),
-      subject,
-      htmlContent: html,
-    });
+    await sendMail(adminEmails, subject, html);
     console.log(`New request email sent to admins: ${adminEmails.join(', ')}`);
   } catch (err) {
     console.error('Failed to send admin notification email:', err.message || err);
@@ -322,12 +312,7 @@ const sendCancellationEmail = async (appointment) => {
   });
 
   try {
-    await brevoRequest('POST', '/smtp/email', {
-      sender: { name: SENDER_NAME, email: SENDER_EMAIL },
-      to: [{ email: appointment.bookerEmail, name: appointment.bookerName }],
-      subject,
-      htmlContent: html,
-    });
+    await sendMail(appointment.bookerEmail, subject, html);
     console.log(`Cancellation email sent to ${appointment.bookerEmail}`);
   } catch (err) {
     console.error('Failed to send cancellation email:', err.message || err);
