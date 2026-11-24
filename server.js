@@ -2,7 +2,12 @@ const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
 const dotenv = require('dotenv');
+const dns = require('dns');
 const { generalLimiter } = require('./middleware/rateLimiter');
+
+// Workaround: c-ares (used for mongodb+srv:// SRV lookups) picks up a stale
+// DNS server list on this machine and times out; pin it to the adapter's DNS.
+dns.setServers(['8.8.8.8', '8.8.4.4']);
 
 dotenv.config();
 
