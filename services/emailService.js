@@ -8,7 +8,7 @@ const SMTP_HOST = process.env.SMTP_HOST;
 const SMTP_PORT = parseInt(process.env.SMTP_PORT || '587', 10);
 const SMTP_USER = process.env.SMTP_USER;
 const SMTP_PASS = process.env.SMTP_PASS;
-const SENDER_EMAIL = process.env.SENDER_EMAIL || SMTP_USER || 'noreply@dogh-appointments.com';
+const SENDER_EMAIL = process.env.SENDER_EMAIL || process.env.SMTP_SENDER || SMTP_USER || 'noreply@dogh-appointments.com';
 const SENDER_NAME = 'DOGH Room Appointment';
 
 const transporter = (SMTP_HOST && SMTP_USER && SMTP_PASS)
